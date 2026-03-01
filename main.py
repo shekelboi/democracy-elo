@@ -1,3 +1,6 @@
+import random
+from typing import List
+
 from sqlalchemy import create_engine, Column, String, Float, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -40,5 +43,73 @@ session = Session()
 
 # Query all countries
 countries = session.query(Country).all()
-for c in countries:
-    print(c.id, c.name, round(c.elo, 4))
+
+
+def show_menu():
+    print("\n")
+    print("--- Game Menu ---")
+    print("1. Start Game")
+    print("2. Statistics")
+    print("3. Exit")
+
+
+def start_game(countries: List[Country]):
+    while True:
+        # Pick two distinct countries
+        country1, country2 = random.sample(countries, 2)
+
+        print("\n")
+        print(f"Which country is more democratic?")
+        print(f"1: {country1.name}")
+        print(f"2: {country2.name}")
+        print("s: skip")
+        print("e: exit to main menu")
+
+        while True:
+            choice = input("Your choice: ").strip().lower()
+            if choice == "1":
+                winner = True
+            elif choice == "2":
+                winner = False
+            elif choice not in {"s", "e"}:
+                print("Invalid input, try again.")
+                continue
+            break
+
+        if choice == "s":
+            continue
+        elif choice == "e":
+            print("Returning to main menu.")
+            break
+
+        result = calculate_elo(country1.elo, country2.elo, winner)
+        country1.elo += result
+        country2.elo -= result
+        session.commit()
+
+
+def show_statistics(countries: List[Country]):
+    print("\n")
+    print("--- Country Statistics ---")
+    for country in countries:
+        # Uniform spacing with 20-character padding
+        print(f"{country.name:<25} {country.elo:.2f}")
+
+
+def main():
+    while True:
+        show_menu()
+        choice = input("Select an option: ").strip()
+
+        if choice == "1":
+            start_game(countries)
+        elif choice == "2":
+            show_statistics(countries)
+        elif choice == "3":
+            break
+        else:
+            print("Invalid choice, try again.")
+
+
+if __name__ == "__main__":
+    main()
