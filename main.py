@@ -1,3 +1,16 @@
+from sqlalchemy import create_engine, Column, String, Float, Text
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+Base = declarative_base()
+
+
+class Country(Base):
+    __tablename__ = "country"
+    id: str = Column(Text, primary_key=True)
+    name: str = Column(String)
+    elo: float = Column(Float)
+
+
 def calculate_elo(country1: float, country2: float, winner: bool):
     """
 
@@ -18,3 +31,14 @@ def calculate_elo(country1: float, country2: float, winner: bool):
     k_factor = 20
     change = k_factor * (winner - expected_result)
     return change
+
+
+# Connect to SQLite
+engine = create_engine("sqlite:///db/countries.sqlite", echo=False)
+Session = sessionmaker(bind=engine)
+session = Session()
+
+# Query all countries
+countries = session.query(Country).all()
+for c in countries:
+    print(c.id, c.name, round(c.elo, 4))
