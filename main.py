@@ -82,7 +82,7 @@ def start_game(countries: List[Country]):
             print("Returning to main menu.")
             break
 
-        result = calculate_elo(country1.elo, country2.elo, winner)
+        result = round(calculate_elo(country1.elo, country2.elo, winner), 4)
         country1.elo += result
         country2.elo -= result
         session.commit()
