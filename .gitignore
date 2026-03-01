@@ -163,5 +163,5 @@ cython_debug/
 .idea/
 
 # The database (only its original state is committed)
-db
+db/countries.sqlite
 
