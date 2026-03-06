@@ -1,8 +1,10 @@
 import random
-from typing import List
-
 from sqlalchemy import create_engine, Column, String, Float, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
+
+from fastapi import FastAPI
+from starlette.responses import JSONResponse
+from starlette.status import HTTP_400_BAD_REQUEST
 
 Base = declarative_base()
 
@@ -37,79 +39,59 @@ def calculate_elo(country1: float, country2: float, winner: bool):
 
 
 # Connect to SQLite
-engine = create_engine("sqlite:///db/countries.sqlite", echo=False)
+engine = create_engine("sqlite:///db/countries.sqlite", echo=False, connect_args={"timeout": 2})
 Session = sessionmaker(bind=engine)
 session = Session()
 
-# Query all countries
-countries = session.query(Country).all()
+app = FastAPI()
 
 
-def show_menu():
-    print("\n")
-    print("--- Game Menu ---")
-    print("1. Start Game")
-    print("2. Statistics")
-    print("3. Exit")
+# GET endpoint
+@app.get("/countries")
+def countries_endpoint():
+    countries = session.query(Country).all()
+    return [c for c in countries]
 
 
-def start_game(countries: List[Country]):
-    while True:
-        # Pick two distinct countries
-        country1, country2 = random.sample(countries, 2)
-
-        print("\n")
-        print(f"Which country is more democratic?")
-        print(f"1: {country1.name}")
-        print(f"2: {country2.name}")
-        print("s: skip")
-        print("e: exit to main menu")
-
-        while True:
-            choice = input("Your choice: ").strip().lower()
-            if choice == "1":
-                winner = True
-            elif choice == "2":
-                winner = False
-            elif choice not in {"s", "e"}:
-                print("Invalid input, try again.")
-                continue
-            break
-
-        if choice == "s":
-            continue
-        elif choice == "e":
-            print("Returning to main menu.")
-            break
-
-        result = round(calculate_elo(country1.elo, country2.elo, winner), 4)
-        country1.elo += result
-        country2.elo -= result
-        session.commit()
+@app.get("/country")
+def country_endpoint(id: str):
+    country = session.query(Country).where(Country.id == id.upper()).one_or_none()
+    if not country:
+        return JSONResponse(
+            status_code=HTTP_400_BAD_REQUEST,
+            content={"error": "Country not found"}
+        )
+    return country
 
 
-def show_statistics(countries: List[Country]):
-    print("\n")
-    print("--- Country Statistics ---")
-    for country in countries:
-        # Uniform spacing with 20-character padding
-        print(f"{country.name:<25} {country.elo:.2f}")
+@app.get("/random_pair")
+def random_pair_endpoint():
+    countries = session.query(Country).all()
+    country1, country2 = random.sample(countries, 2)
+    return country1, country2
 
 
-def main():
-    while True:
-        show_menu()
-        choice = input("Select an option: ").strip()
+@app.api_route("/select_winner", methods=["POST", "GET"])
+def select_winner_endpoint(country1_id, country2_id, winner: bool):
+    """
 
-        if choice == "1":
-            start_game(countries)
-        elif choice == "2":
-            show_statistics(countries)
-        elif choice == "3":
-            break
-        else:
-            print("Invalid choice, try again.")
+    :param country1_id: First country in the race.
+    :param country2_id: Second country in the race.
+    :param winner: True if country1 is the winner, false if country2 is the winner.
+    :return: Success or error.
+    """
+    country1_id, country2_id = country1_id.upper(), country2_id.upper()
+    country1 = session.query(Country).where(Country.id == country1_id).with_for_update().one_or_none()
+    country2 = session.query(Country).where(Country.id == country2_id).with_for_update().one_or_none()
+    if not country1 or not country2:
+        return JSONResponse(
+            status_code=HTTP_400_BAD_REQUEST,
+            content={"error": "Country not found"}
+        )
+    change = calculate_elo(country1.elo, country2.elo, winner)
 
-
-if __name__ == "__main__":
-    main()
+    result = round(calculate_elo(country1.elo, country2.elo, winner), 4)
+    country1.elo += result
+    country2.elo -= result
+    session.commit()
+    return {"change": change}
