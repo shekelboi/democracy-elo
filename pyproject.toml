@@ -1,0 +1,9 @@
+[project]
+name = "democracy-elo"
+version = "0.1.0"
+description = "A project to compare democracies."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "sqlalchemy>=2.0.48",
+]
