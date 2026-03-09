@@ -1,8 +1,11 @@
+import os
 import random
-from sqlalchemy import create_engine, Column, String, Float, Text
+
+from sqlalchemy import create_engine, Column, String, Float, Text, Integer
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from fastapi import FastAPI
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_400_BAD_REQUEST
 
@@ -14,6 +17,17 @@ class Country(Base):
     id: str = Column(Text, primary_key=True)
     name: str = Column(String)
     elo: float = Column(Float)
+
+    def __hash__(self):
+        return int("".join(map(str, map(ord, self.id))))
+
+
+class Match(Base):
+    __tablename__ = "match"
+    id: str = Column(Integer, primary_key=True, autoincrement=True)
+    ip: str = Column(String)
+    countries: str = Column(String)
+    winner: str = Column(String)
 
 
 def calculate_elo(country1: float, country2: float, winner: bool):
@@ -40,22 +54,29 @@ def calculate_elo(country1: float, country2: float, winner: bool):
 
 # Connect to SQLite
 engine = create_engine("sqlite:///db/countries.sqlite", echo=False, connect_args={"timeout": 2})
-Session = sessionmaker(bind=engine)
-session = Session()
+SessionLocal = sessionmaker(bind=engine)
+read_session = SessionLocal()
+
+countries = read_session.query(Country).all()
 
 app = FastAPI()
 
 
-# GET endpoint
+def get_ip(request: Request):
+    if os.environ.get("REVERSE_PROXY"):
+        return request.headers.get("x-forwarded-for", request.client.host)
+    return request.client.host
+
+
 @app.get("/countries")
 def countries_endpoint():
-    countries = session.query(Country).all()
+    countries = read_session.query(Country).all()
     return [c for c in countries]
 
 
 @app.get("/country")
 def country_endpoint(id: str):
-    country = session.query(Country).where(Country.id == id.upper()).one_or_none()
+    country = read_session.query(Country).where(Country.id == id.upper()).one_or_none()
     if not country:
         return JSONResponse(
             status_code=HTTP_400_BAD_REQUEST,
@@ -66,32 +87,83 @@ def country_endpoint(id: str):
 
 @app.get("/random_pair")
 def random_pair_endpoint():
-    countries = session.query(Country).all()
-    country1, country2 = random.sample(countries, 2)
+    """
+    Returns a random pair of countries in alphabetical order.
+    :return: A random pair of countries.
+    """
+    country_pairs = {m.countries for m in read_session.query(Match).all()}
+
+    limit = 1000
+
+    for i in range(limit):
+        country1, country2 = sorted(random.sample(countries, 2), key=lambda x: x.id)
+
+        country_pair = f"{country1.id}-{country2.id}"
+        if country_pair not in country_pairs:
+            break
+
+    # If we cannot find a unique pair, we just use the last pair we selected
     return country1, country2
 
 
-@app.api_route("/select_winner", methods=["POST", "GET"])
-def select_winner_endpoint(country1_id, country2_id, winner: bool):
+@app.get("/my_votes")
+def my_votes_endpoint(request: Request):
     """
+    Returns all your votes.
+    :return: All your previous votes.
+    """
+    votes = read_session.query(Match).filter(Match.ip == get_ip(request)).all()
+    return votes
 
+
+@app.api_route("/select_winner", methods=["POST", "GET"])
+def select_winner_endpoint(request: Request, country1_id, country2_id, winner: bool):
+    """
     :param country1_id: First country in the race.
     :param country2_id: Second country in the race.
     :param winner: True if country1 is the winner, false if country2 is the winner.
     :return: Success or error.
     """
     country1_id, country2_id = country1_id.upper(), country2_id.upper()
-    country1 = session.query(Country).where(Country.id == country1_id).with_for_update().one_or_none()
-    country2 = session.query(Country).where(Country.id == country2_id).with_for_update().one_or_none()
-    if not country1 or not country2:
+    country1_id, country2_id = sorted([country1_id, country2_id])  # Ensuring that they are in the right order
+    if country1_id == country2_id:
         return JSONResponse(
             status_code=HTTP_400_BAD_REQUEST,
-            content={"error": "Country not found"}
+            content={"error": "Cannot compete a country against itself."}
         )
-    change = calculate_elo(country1.elo, country2.elo, winner)
 
-    result = round(calculate_elo(country1.elo, country2.elo, winner), 4)
-    country1.elo += result
-    country2.elo -= result
-    session.commit()
+    with SessionLocal() as write_session:
+        with write_session.begin():
+            country1 = write_session.query(Country).where(
+                Country.id == country1_id).one_or_none()
+            country2 = write_session.query(Country).where(
+                Country.id == country2_id).one_or_none()
+            if not country1 or not country2:
+                return JSONResponse(
+                    status_code=HTTP_400_BAD_REQUEST,
+                    content={"error": "Country not found"}
+                )
+
+            country_pair = f"{country1_id}-{country2_id}"
+            match = write_session.query(Match).where(Match.ip == get_ip(request)).filter(
+                Match.countries == country_pair).one_or_none()
+
+            if match:
+                # Silent refusal
+                return {"change": 0}
+
+            change = calculate_elo(country1.elo, country2.elo, winner)
+
+            result = round(change, 4)
+            country1.elo += result
+            country2.elo -= result
+
+            winner_country = country1_id if winner else country2_id
+
+            write_session.add(Match(
+                ip=request.client.host,
+                countries=country_pair,
+                winner=winner_country,
+            ))
+
     return {"change": change}
