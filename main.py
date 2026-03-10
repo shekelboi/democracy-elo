@@ -5,11 +5,16 @@ from sqlalchemy import create_engine, Column, String, Float, Text, Integer
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_400_BAD_REQUEST
+from dotenv import load_dotenv
 
+load_dotenv()
 Base = declarative_base()
+
+ALLOWED_ORIGINS = os.getenv("CORS_ALLOW_ORIGINS", "").split(",")
 
 
 class Country(Base):
@@ -28,6 +33,22 @@ class Match(Base):
     ip: str = Column(String)
     countries: str = Column(String)
     winner: str = Column(String)
+
+
+engine = create_engine("sqlite:///db/countries.sqlite", echo=False, connect_args={"timeout": 2})
+SessionLocal = sessionmaker(bind=engine)
+read_session = SessionLocal()
+
+countries = read_session.query(Country).all()
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def calculate_elo(country1: float, country2: float, winner: bool):
@@ -50,16 +71,6 @@ def calculate_elo(country1: float, country2: float, winner: bool):
     k_factor = 20
     change = k_factor * (winner - expected_result)
     return change
-
-
-# Connect to SQLite
-engine = create_engine("sqlite:///db/countries.sqlite", echo=False, connect_args={"timeout": 2})
-SessionLocal = sessionmaker(bind=engine)
-read_session = SessionLocal()
-
-countries = read_session.query(Country).all()
-
-app = FastAPI()
 
 
 def get_ip(request: Request):
